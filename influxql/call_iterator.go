@@ -781,7 +781,7 @@ func IntegerSpreadReduceSlice(a []IntegerPoint) []IntegerPoint {
 	return []IntegerPoint{{Time: ZeroTime, Value: max - min}}
 }
 
-func newTopIterator(input Iterator, opt IteratorOptions, n int, keepTags bool) (Iterator, error) {
+func NewTopIterator(input Iterator, opt IteratorOptions, n int, keepTags bool) (Iterator, error) {
 	switch input := input.(type) {
 	case FloatIterator:
 		createFn := func() (FloatPointAggregator, FloatPointEmitter) {
@@ -804,7 +804,7 @@ func newTopIterator(input Iterator, opt IteratorOptions, n int, keepTags bool) (
 	}
 }
 
-func newBottomIterator(input Iterator, opt IteratorOptions, n int, keepTags bool) (Iterator, error) {
+func NewBottomIterator(input Iterator, opt IteratorOptions, n int, keepTags bool) (Iterator, error) {
 	switch input := input.(type) {
 	case FloatIterator:
 		createFn := func() (FloatPointAggregator, FloatPointEmitter) {

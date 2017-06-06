@@ -7,8 +7,8 @@ import (
 
 	"github.com/influxdata/influxdb/coordinator"
 	"github.com/influxdata/influxdb/influxql"
+	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/influxdb/tsdb"
 )
 
 func TestLocalShardMapper(t *testing.T) {
@@ -33,7 +33,7 @@ func TestLocalShardMapper(t *testing.T) {
 	}
 
 	var tsdbStore TSDBStore
-	tsdbStore.ShardGroupFn = func(ids []uint64) tsdb.ShardGroup {
+	tsdbStore.ShardGroupFn = func(ids []uint64) query.ShardGroup {
 		if !reflect.DeepEqual(ids, []uint64{1, 2, 3, 4}) {
 			t.Errorf("unexpected shard ids: %#v", ids)
 		}
