@@ -1,3 +1,9 @@
+## v1.3.2 [unreleased]
+
+### Bugfixes
+
+- [#8601](https://github.com/influxdata/influxdb/pull/8601): Fixed time boundaries for continuous queries with time zones.
+
 ## v1.3.1 [2017-07-20]
 
 ### Bugfixes
