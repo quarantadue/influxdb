@@ -43,6 +43,7 @@ type Engine interface {
 	Import(r io.Reader, basePath string) error
 
 	CreateIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error)
+	CreateCursor(r CursorRequest) (Cursor, error)
 	WritePoints(points []models.Point) error
 
 	CreateSeriesIfNotExists(key, name []byte, tags models.Tags) error

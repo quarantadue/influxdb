@@ -44,6 +44,7 @@ type Index interface {
 	MeasurementSeriesKeysByExpr(name []byte, condition influxql.Expr) ([][]byte, error)
 	ForEachMeasurementSeriesByExpr(name []byte, expr influxql.Expr, fn func(tags models.Tags) error) error
 	SeriesPointIterator(opt influxql.IteratorOptions) (influxql.Iterator, error)
+	MeasurementSeriesPointIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error)
 
 	// Sets a shared fieldset from the engine.
 	SetFieldSet(fs *MeasurementFieldSet)

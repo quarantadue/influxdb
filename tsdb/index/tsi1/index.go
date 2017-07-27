@@ -825,7 +825,28 @@ func (i *Index) UnassignShard(k string, shardID uint64) error {
 func (i *Index) SeriesPointIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
 	// NOTE: The iterator handles releasing the file set.
 	fs := i.RetainFileSet()
-	return newSeriesPointIterator(fs, i.fieldset, opt), nil
+	return newSeriesPointIterator(fs, i.fieldset, fs.MeasurementIterator(), opt), nil
+}
+
+type measurementElemsIterator MeasurementElems
+
+func (m *measurementElemsIterator) Next() (n MeasurementElem) {
+	if len(*m) == 0 {
+		return nil
+	}
+
+	n, *m = (*m)[0], (*m)[1:]
+	return n
+}
+
+func (i *Index) MeasurementSeriesPointIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error) {
+	// NOTE: The iterator handles releasing the file set.
+	fs := i.RetainFileSet()
+	var mitr measurementElemsIterator
+	if el := fs.Measurement([]byte(measurement)); el != nil {
+		mitr = append(mitr, el)
+	}
+	return newSeriesPointIterator(fs, i.fieldset, &mitr, opt), nil
 }
 
 // Compact requests a compaction of log files.
@@ -1125,11 +1146,11 @@ type seriesPointIterator struct {
 }
 
 // newSeriesPointIterator returns a new instance of seriesPointIterator.
-func newSeriesPointIterator(fs *FileSet, fieldset *tsdb.MeasurementFieldSet, opt influxql.IteratorOptions) *seriesPointIterator {
+func newSeriesPointIterator(fs *FileSet, fieldset *tsdb.MeasurementFieldSet, mitr MeasurementIterator, opt influxql.IteratorOptions) *seriesPointIterator {
 	return &seriesPointIterator{
 		fs:       fs,
 		fieldset: fieldset,
-		mitr:     fs.MeasurementIterator(),
+		mitr:     mitr,
 		point: influxql.FloatPoint{
 			Aux: make([]interface{}, len(opt.Aux)),
 		},

@@ -730,6 +730,10 @@ func (s *Shard) CreateIterator(measurement string, opt influxql.IteratorOptions)
 	return s.engine.CreateIterator(measurement, opt)
 }
 
+func (s *Shard) CreateCursor(r CursorRequest) (Cursor, error) {
+	return s.engine.CreateCursor(r)
+}
+
 // createSystemIterator returns an iterator for a system source.
 func (s *Shard) createSystemIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, bool, error) {
 	switch measurement {
