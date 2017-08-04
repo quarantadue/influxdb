@@ -42,6 +42,13 @@ const (
 	Unsigned = 9
 )
 
+type ExplainFormat int
+
+const (
+	ExplainDefaultFormat ExplainFormat = iota
+	ExplainGraphFormat
+)
+
 var (
 	// ErrInvalidTime is returned when the timestamp string used to
 	// compare against time field is invalid.
@@ -606,12 +613,25 @@ type ExplainStatement struct {
 	// Leaving this as only supporting select statements at the moment.
 	// Might expand this later to include other statements.
 	Statement *SelectStatement
+
+	// Analyze is set when we want to analyze the query results and outputs.
+	Analyze bool
+
+	// Format is the output format for the explain statement.
+	Format ExplainFormat
 }
 
 // String returns a string representation of the explain statement.
 func (s *ExplainStatement) String() string {
 	var buf bytes.Buffer
 	_, _ = buf.WriteString("EXPLAIN ")
+	if s.Analyze {
+		_, _ = buf.WriteString("ANALYZE ")
+	}
+	switch s.Format {
+	case ExplainGraphFormat:
+		_, _ = buf.WriteString("FORMAT GRAPH ")
+	}
 	_, _ = buf.WriteString(s.Statement.String())
 	return buf.String()
 }

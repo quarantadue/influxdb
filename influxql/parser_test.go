@@ -2253,6 +2253,40 @@ func TestParser_ParseStatement(t *testing.T) {
 			},
 		},
 
+		// EXPLAIN ANALYZE SELECT ...
+		{
+			s: `EXPLAIN ANALYZE SELECT * FROM cpu`,
+			stmt: &influxql.ExplainStatement{
+				Statement: &influxql.SelectStatement{
+					Fields: []*influxql.Field{{
+						Expr: &influxql.Wildcard{},
+					}},
+					Sources: []influxql.Source{
+						&influxql.Measurement{Name: "cpu"},
+					},
+					IsRawQuery: true,
+				},
+				Analyze: true,
+			},
+		},
+
+		// EXPLAIN FORMAT GRAPH SELECT ...
+		{
+			s: `EXPLAIN FORMAT GRAPH SELECT * FROM cpu`,
+			stmt: &influxql.ExplainStatement{
+				Statement: &influxql.SelectStatement{
+					Fields: []*influxql.Field{{
+						Expr: &influxql.Wildcard{},
+					}},
+					Sources: []influxql.Source{
+						&influxql.Measurement{Name: "cpu"},
+					},
+					IsRawQuery: true,
+				},
+				Format: influxql.ExplainGraphFormat,
+			},
+		},
+
 		// GRANT READ
 		{
 			s: `GRANT READ ON testdb TO jdoe`,

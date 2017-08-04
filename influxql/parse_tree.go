@@ -214,7 +214,7 @@ func init() {
 	Language.Group(KILL).Handle(QUERY, func(p *Parser) (Statement, error) {
 		return p.parseKillQueryStatement()
 	})
-	Language.Group(EXPLAIN).Handle(SELECT, func(p *Parser) (Statement, error) {
+	Language.Handle(EXPLAIN, func(p *Parser) (Statement, error) {
 		return p.parseExplainStatement()
 	})
 }

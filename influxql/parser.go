@@ -143,13 +143,41 @@ func (p *Parser) parseKillQueryStatement() (*KillQueryStatement, error) {
 }
 
 // parseExplainStatement parses a string and returns an ExplainStatement.
-// This function assumes the EXPLAIN SELECT tokens have already been consumed.
+// This function assumes the EXPLAIN tokens have already been consumed.
 func (p *Parser) parseExplainStatement() (*ExplainStatement, error) {
+	s := &ExplainStatement{}
+
+OPTIONS:
+	for {
+		tok, _, _ := p.ScanIgnoreWhitespace()
+		switch tok {
+		case ANALYZE:
+			s.Analyze = true
+		case FORMAT:
+			tok0, pos0, lit0 := p.ScanIgnoreWhitespace()
+			switch tok0 {
+			case GRAPH:
+				s.Format = ExplainGraphFormat
+			default:
+				return nil, newParseError(tokstr(tok0, lit0), []string{"GRAPH"}, pos0)
+			}
+		default:
+			p.Unscan()
+			break OPTIONS
+		}
+	}
+
+	tok, pos, lit := p.ScanIgnoreWhitespace()
+	if tok != SELECT {
+		return nil, newParseError(tokstr(tok, lit), []string{"ANALYZE", "FORMAT", "SELECT"}, pos)
+	}
+
 	stmt, err := p.parseSelectStatement(targetNotRequired)
 	if err != nil {
 		return nil, err
 	}
-	return &ExplainStatement{Statement: stmt}, nil
+	s.Statement = stmt
+	return s, nil
 }
 
 // parseCreateSubscriptionStatement parses a string and returns a CreateSubscriptionStatement.
