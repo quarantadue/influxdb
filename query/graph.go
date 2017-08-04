@@ -41,6 +41,18 @@ func (e *WriteEdge) SetIterator(itr influxql.Iterator) {
 	e.ready = true
 }
 
+type WrapIteratorFn func(input influxql.Iterator) influxql.Iterator
+
+func (e *WriteEdge) WrapIterator(fn WrapIteratorFn) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.ready {
+		panic(fmt.Sprintf("attempted to wrap an iterator from an edge before it was ready: %T", e.Node))
+	}
+	e.itr = fn(e.itr)
+}
+
 // Attach attaches this WriteEdge to a Node and returns the WriteEdge so it
 // can be assigned to the Node's output.
 func (e *WriteEdge) Attach(n Node) *WriteEdge {
