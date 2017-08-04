@@ -1102,6 +1102,30 @@ func decodeIteratorStats(pb *internal.IteratorStats) IteratorStats {
 	}
 }
 
+type IteratorAnalysis struct {
+	PointsReturned int64
+	ElapsedTime    time.Duration
+}
+
+func (a *IteratorAnalysis) TrackSince(start time.Time) {
+	a.ElapsedTime += time.Now().Sub(start)
+}
+
+func NewAnalyzeIterator(input Iterator) (Iterator, *IteratorAnalysis) {
+	switch input := input.(type) {
+	case FloatIterator:
+		return newFloatAnalyzeIterator(input)
+	case IntegerIterator:
+		return newIntegerAnalyzeIterator(input)
+	case StringIterator:
+		return newStringAnalyzeIterator(input)
+	case BooleanIterator:
+		return newBooleanAnalyzeIterator(input)
+	default:
+		panic(fmt.Sprintf("unsupported analyze iterator type: %T", input))
+	}
+}
+
 // floatFastDedupeIterator outputs unique points where the point has a single aux field.
 type floatFastDedupeIterator struct {
 	input FloatIterator

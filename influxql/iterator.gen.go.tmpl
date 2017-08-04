@@ -1629,6 +1629,33 @@ func (itr *{{$k.name}}FilterIterator) Next() (*{{$k.Name}}Point, error) {
 	}
 }
 
+type {{$k.name}}AnalyzeIterator struct {
+	input {{$k.Name}}Iterator
+	analysis *IteratorAnalysis
+}
+
+// new{{$k.Name}}AnalyzeIterator
+func new{{$k.Name}}AnalyzeIterator(input {{$k.Name}}Iterator) (*{{$k.name}}AnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &{{$k.name}}AnalyzeIterator{
+		input: input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *{{$k.name}}AnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *{{$k.name}}AnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *{{$k.name}}AnalyzeIterator) Next() (*{{$k.Name}}Point, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
+}
+
 // new{{$k.Name}}DedupeIterator returns a new instance of {{$k.name}}DedupeIterator.
 func new{{$k.Name}}DedupeIterator(input {{$k.Name}}Iterator) *{{$k.name}}DedupeIterator {
 	return &{{$k.name}}DedupeIterator{

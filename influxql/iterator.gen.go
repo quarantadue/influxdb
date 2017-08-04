@@ -3290,6 +3290,33 @@ func (itr *floatFilterIterator) Next() (*FloatPoint, error) {
 	}
 }
 
+type floatAnalyzeIterator struct {
+	input    FloatIterator
+	analysis *IteratorAnalysis
+}
+
+// newFloatAnalyzeIterator
+func newFloatAnalyzeIterator(input FloatIterator) (*floatAnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &floatAnalyzeIterator{
+		input:    input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *floatAnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *floatAnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *floatAnalyzeIterator) Next() (*FloatPoint, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
+}
+
 // newFloatDedupeIterator returns a new instance of floatDedupeIterator.
 func newFloatDedupeIterator(input FloatIterator) *floatDedupeIterator {
 	return &floatDedupeIterator{
@@ -6634,6 +6661,33 @@ func (itr *integerFilterIterator) Next() (*IntegerPoint, error) {
 	}
 }
 
+type integerAnalyzeIterator struct {
+	input    IntegerIterator
+	analysis *IteratorAnalysis
+}
+
+// newIntegerAnalyzeIterator
+func newIntegerAnalyzeIterator(input IntegerIterator) (*integerAnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &integerAnalyzeIterator{
+		input:    input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *integerAnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *integerAnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *integerAnalyzeIterator) Next() (*IntegerPoint, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
+}
+
 // newIntegerDedupeIterator returns a new instance of integerDedupeIterator.
 func newIntegerDedupeIterator(input IntegerIterator) *integerDedupeIterator {
 	return &integerDedupeIterator{
@@ -9962,6 +10016,33 @@ func (itr *unsignedFilterIterator) Next() (*UnsignedPoint, error) {
 		}
 		return p, nil
 	}
+}
+
+type unsignedAnalyzeIterator struct {
+	input    UnsignedIterator
+	analysis *IteratorAnalysis
+}
+
+// newUnsignedAnalyzeIterator
+func newUnsignedAnalyzeIterator(input UnsignedIterator) (*unsignedAnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &unsignedAnalyzeIterator{
+		input:    input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *unsignedAnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *unsignedAnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *unsignedAnalyzeIterator) Next() (*UnsignedPoint, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
 }
 
 // newUnsignedDedupeIterator returns a new instance of unsignedDedupeIterator.
@@ -13294,6 +13375,33 @@ func (itr *stringFilterIterator) Next() (*StringPoint, error) {
 	}
 }
 
+type stringAnalyzeIterator struct {
+	input    StringIterator
+	analysis *IteratorAnalysis
+}
+
+// newStringAnalyzeIterator
+func newStringAnalyzeIterator(input StringIterator) (*stringAnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &stringAnalyzeIterator{
+		input:    input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *stringAnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *stringAnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *stringAnalyzeIterator) Next() (*StringPoint, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
+}
+
 // newStringDedupeIterator returns a new instance of stringDedupeIterator.
 func newStringDedupeIterator(input StringIterator) *stringDedupeIterator {
 	return &stringDedupeIterator{
@@ -16622,6 +16730,33 @@ func (itr *booleanFilterIterator) Next() (*BooleanPoint, error) {
 		}
 		return p, nil
 	}
+}
+
+type booleanAnalyzeIterator struct {
+	input    BooleanIterator
+	analysis *IteratorAnalysis
+}
+
+// newBooleanAnalyzeIterator
+func newBooleanAnalyzeIterator(input BooleanIterator) (*booleanAnalyzeIterator, *IteratorAnalysis) {
+	analysis := &IteratorAnalysis{}
+	return &booleanAnalyzeIterator{
+		input:    input,
+		analysis: analysis,
+	}, analysis
+}
+
+func (itr *booleanAnalyzeIterator) Stats() IteratorStats { return itr.input.Stats() }
+
+func (itr *booleanAnalyzeIterator) Close() error { return itr.input.Close() }
+
+func (itr *booleanAnalyzeIterator) Next() (*BooleanPoint, error) {
+	defer itr.analysis.TrackSince(time.Now())
+	p, err := itr.input.Next()
+	if p != nil {
+		itr.analysis.PointsReturned++
+	}
+	return p, err
 }
 
 // newBooleanDedupeIterator returns a new instance of booleanDedupeIterator.
