@@ -623,6 +623,12 @@ func (b *exprIteratorBuilder) buildCallIterator(expr *Call) (Iterator, error) {
 				return nil, err
 			}
 			return newStddevIterator(input, opt)
+		case "meandb":
+			input, err := buildExprIterator(expr.Args[0].(*VarRef), b.ic, b.sources, opt, false, false)
+			if err != nil {
+				return nil, err
+			}
+			return newMeandBIterator(input, opt)
 		case "spread":
 			// OPTIMIZE(benbjohnson): convert to map/reduce
 			input, err := buildExprIterator(expr.Args[0].(*VarRef), b.ic, b.sources, opt, false, false)

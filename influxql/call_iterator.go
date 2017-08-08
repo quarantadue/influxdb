@@ -735,6 +735,65 @@ func IntegerStddevReduceSlice(a []IntegerPoint) []FloatPoint {
 	}}
 }
 
+// newMeandBIterator returns an iterator for operating on a meandb() call.
+func newMeandBIterator(input Iterator, opt IteratorOptions) (Iterator, error) {
+	switch input := input.(type) {
+	case FloatIterator:
+		createFn := func() (FloatPointAggregator, FloatPointEmitter) {
+			fn := NewFloatSliceFuncReducer(FloatMeandBReduceSlice)
+			return fn, fn
+		}
+		return newFloatReduceFloatIterator(input, opt, createFn), nil
+	case IntegerIterator:
+		createFn := func() (IntegerPointAggregator, FloatPointEmitter) {
+			fn := NewIntegerSliceFuncFloatReducer(IntegerMeandBReduceSlice)
+			return fn, fn
+		}
+		return newIntegerReduceFloatIterator(input, opt, createFn), nil
+	default:
+		return nil, fmt.Errorf("unsupported meandb iterator type: %T", input)
+	}
+}
+
+// FloatMeandBReduceSlice returns the meandb value within a window.
+func FloatMeandBReduceSlice(a []FloatPoint) []FloatPoint {
+	
+	// Calculate sum and count.
+	var mulfactor float64=0.230258509299405
+	var sum float64
+	var count int
+	for _, p := range a {
+		if math.IsNaN(p.Value) {
+			continue
+		}
+		count++
+		sum += math.Exp(p.Value*mulfactor)
+	}
+
+	return []FloatPoint{{
+		Time:  ZeroTime,
+		Value: math.Log(sum / float64(count))/mulfactor,
+	}}
+}
+
+// IntegerMeandBReduceSlice returns the meandb value within a window.
+func IntegerMeandBReduceSlice(a []IntegerPoint) []FloatPoint {
+	
+	// Calculate sum and count.
+	var mulfactor float64=0.230258509299405
+	var sum float64
+	var count int
+	for _, p := range a {
+		count++
+		sum += math.Exp(float64(p.Value)*mulfactor)
+	}
+
+	return []FloatPoint{{
+		Time:  ZeroTime,
+		Value: math.Log(sum / float64(count))/mulfactor,
+	}}
+}
+
 // newSpreadIterator returns an iterator for operating on a spread() call.
 func newSpreadIterator(input Iterator, opt IteratorOptions) (Iterator, error) {
 	switch input := input.(type) {
