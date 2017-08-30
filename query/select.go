@@ -686,7 +686,7 @@ func (b *exprIteratorBuilder) buildCallIterator(expr *influxql.Call) (Iterator, 
 			}
 			return newStddevIterator(input, opt)
 		case "meandb":
-			input, err := buildExprIterator(expr.Args[0].(*VarRef), b.ic, b.sources, opt, false, false)
+			input, err := buildExprIterator(expr.Args[0].(*influxql.VarRef), b.ic, b.sources, opt, false, false)
 			if err != nil {
 				return nil, err
 			}
