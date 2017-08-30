@@ -829,9 +829,21 @@ func (s *Store) DeleteSeries(database string, sources []influxql.Source, conditi
 	sources = a
 
 	// Determine deletion time range.
-	min, max, err := influxql.TimeRangeAsEpochNano(condition)
+	condition, timeRange, err := influxql.ConditionExpr(condition, nil)
 	if err != nil {
 		return err
+	}
+
+	var min, max int64
+	if !timeRange.Min.IsZero() {
+		min = timeRange.Min.UnixNano()
+	} else {
+		min = influxql.MinTime
+	}
+	if !timeRange.Max.IsZero() {
+		max = timeRange.Max.UnixNano()
+	} else {
+		max = influxql.MaxTime
 	}
 
 	s.mu.RLock()
@@ -1266,18 +1278,29 @@ func (s *Store) monitorShards() {
 				continue
 			}
 
-			// inmem shards share the same index instance so just use the first one to avoid
-			// allocating the same measurements repeatedly
-			first := shards[0]
-			names, err := first.MeasurementNamesByExpr(nil)
-			if err != nil {
-				s.Logger.Warn("cannot retrieve measurement names", zap.Error(err))
-				continue
-			}
+			var dbLock sync.Mutex
+			databases := make(map[string]struct{}, len(shards))
 
 			s.walkShards(shards, func(sh *Shard) error {
 				db := sh.database
-				id := sh.id
+
+				// Only process 1 shard from each database
+				dbLock.Lock()
+				if _, ok := databases[db]; ok {
+					dbLock.Unlock()
+					return nil
+				}
+				databases[db] = struct{}{}
+				dbLock.Unlock()
+
+				// inmem shards share the same index instance so just use the first one to avoid
+				// allocating the same measurements repeatedly
+				first := shards[0]
+				names, err := first.MeasurementNamesByExpr(nil)
+				if err != nil {
+					s.Logger.Warn("cannot retrieve measurement names", zap.Error(err))
+					return nil
+				}
 
 				for _, name := range names {
 					sh.ForEachMeasurementTagKey(name, func(k []byte) error {
@@ -1289,8 +1312,8 @@ func (s *Store) monitorShards() {
 
 						// Log at 80, 85, 90-100% levels
 						if perc == 80 || perc == 85 || perc >= 90 {
-							s.Logger.Info(fmt.Sprintf("WARN: %d%% of max-values-per-tag limit exceeded: (%d/%d), db=%s shard=%d measurement=%s tag=%s",
-								perc, n, s.EngineOptions.Config.MaxValuesPerTag, db, id, name, k))
+							s.Logger.Info(fmt.Sprintf("WARN: %d%% of max-values-per-tag limit exceeded: (%d/%d), db=%s measurement=%s tag=%s",
+								perc, n, s.EngineOptions.Config.MaxValuesPerTag, db, name, k))
 						}
 						return nil
 					})

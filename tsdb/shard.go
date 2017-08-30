@@ -18,6 +18,7 @@ import (
 	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/estimator"
+	"github.com/influxdata/influxdb/query"
 	internal "github.com/influxdata/influxdb/tsdb/internal"
 	"github.com/uber-go/zap"
 )
@@ -401,6 +402,12 @@ func (s *Shard) UnloadIndex() {
 	s.index.RemoveShard(s.id)
 }
 
+// Index returns a reference to the underlying index.
+// This should only be used by utilities and not directly accessed by the database.
+func (s *Shard) Index() Index {
+	return s.index
+}
+
 // IsIdle return true if the shard is not receiving writes and is fully compacted.
 func (s *Shard) IsIdle() bool {
 	if err := s.ready(); err != nil {
@@ -716,7 +723,7 @@ func (s *Shard) WriteTo(w io.Writer) (int64, error) {
 }
 
 // CreateIterator returns an iterator for the data in the shard.
-func (s *Shard) CreateIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error) {
+func (s *Shard) CreateIterator(measurement string, opt query.IteratorOptions) (query.Iterator, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
@@ -730,8 +737,8 @@ func (s *Shard) CreateIterator(measurement string, opt influxql.IteratorOptions)
 	return s.engine.CreateIterator(measurement, opt)
 }
 
-// createSystemIterator returns an iterator for a system source.
-func (s *Shard) createSystemIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, bool, error) {
+// createSystemIterator returns an iterator for a field of system source.
+func (s *Shard) createSystemIterator(measurement string, opt query.IteratorOptions) (query.Iterator, bool, error) {
 	switch measurement {
 	case "_fieldKeys":
 		itr, err := NewFieldKeysIterator(s, opt)
@@ -742,12 +749,13 @@ func (s *Shard) createSystemIterator(measurement string, opt influxql.IteratorOp
 	case "_tagKeys":
 		itr, err := NewTagKeysIterator(s, opt)
 		return itr, true, err
+	default:
+		return nil, false, nil
 	}
-	return nil, false, nil
 }
 
 // createSeriesIterator returns a new instance of SeriesIterator.
-func (s *Shard) createSeriesIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
+func (s *Shard) createSeriesIterator(opt query.IteratorOptions) (query.Iterator, error) {
 	// Only equality operators are allowed.
 	var err error
 	influxql.WalkFunc(opt.Condition, func(n influxql.Node) {
@@ -841,6 +849,11 @@ func (s *Shard) MeasurementsByRegex(re *regexp.Regexp) []string {
 
 // MapType returns the data type for the field within the measurement.
 func (s *Shard) MapType(measurement, field string) influxql.DataType {
+	switch field {
+	case "_name", "_tagKey", "_tagValue", "_seriesKey":
+		return influxql.String
+	}
+
 	// Process system measurements.
 	if strings.HasPrefix(measurement, "_") {
 		switch measurement {
@@ -994,7 +1007,7 @@ type ShardGroup interface {
 	MeasurementsByRegex(re *regexp.Regexp) []string
 	FieldDimensions(measurements []string) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error)
 	MapType(measurement, field string) influxql.DataType
-	CreateIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error)
+	CreateIterator(measurement string, opt query.IteratorOptions) (query.Iterator, error)
 	ExpandSources(sources influxql.Sources) (influxql.Sources, error)
 }
 
@@ -1062,12 +1075,12 @@ func (a Shards) MapType(measurement, field string) influxql.DataType {
 	return typ
 }
 
-func (a Shards) CreateIterator(measurement string, opt influxql.IteratorOptions) (influxql.Iterator, error) {
-	itrs := make([]influxql.Iterator, 0, len(a))
+func (a Shards) CreateIterator(measurement string, opt query.IteratorOptions) (query.Iterator, error) {
+	itrs := make([]query.Iterator, 0, len(a))
 	for _, sh := range a {
 		itr, err := sh.CreateIterator(measurement, opt)
 		if err != nil {
-			influxql.Iterators(itrs).Close()
+			query.Iterators(itrs).Close()
 			return nil, err
 		} else if itr == nil {
 			continue
@@ -1076,7 +1089,7 @@ func (a Shards) CreateIterator(measurement string, opt influxql.IteratorOptions)
 
 		select {
 		case <-opt.InterruptCh:
-			influxql.Iterators(itrs).Close()
+			query.Iterators(itrs).Close()
 			return nil, err
 		default:
 		}
@@ -1085,12 +1098,12 @@ func (a Shards) CreateIterator(measurement string, opt influxql.IteratorOptions)
 		if opt.MaxSeriesN > 0 {
 			stats := itr.Stats()
 			if stats.SeriesN > opt.MaxSeriesN {
-				influxql.Iterators(itrs).Close()
+				query.Iterators(itrs).Close()
 				return nil, fmt.Errorf("max-select-series limit exceeded: (%d/%d)", stats.SeriesN, opt.MaxSeriesN)
 			}
 		}
 	}
-	return influxql.Iterators(itrs).Merge(opt)
+	return query.Iterators(itrs).Merge(opt)
 }
 
 func (a Shards) ExpandSources(sources influxql.Sources) (influxql.Sources, error) {
@@ -1139,6 +1152,18 @@ type MeasurementFields struct {
 // NewMeasurementFields returns an initialised *MeasurementFields value.
 func NewMeasurementFields() *MeasurementFields {
 	return &MeasurementFields{fields: make(map[string]*Field)}
+}
+
+func (m *MeasurementFields) FieldKeys() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	a := make([]string, 0, len(m.fields))
+	for key := range m.fields {
+		a = append(a, key)
+	}
+	sort.Strings(a)
+	return a
 }
 
 // MarshalBinary encodes the object to a binary format.
@@ -1340,7 +1365,7 @@ type Field struct {
 
 // NewFieldKeysIterator returns an iterator that can be iterated over to
 // retrieve field keys.
-func NewFieldKeysIterator(sh *Shard, opt influxql.IteratorOptions) (influxql.Iterator, error) {
+func NewFieldKeysIterator(sh *Shard, opt query.IteratorOptions) (query.Iterator, error) {
 	itr := &fieldKeysIterator{sh: sh}
 
 	// Retrieve measurements from shard. Filter if condition specified.
@@ -1364,13 +1389,13 @@ type fieldKeysIterator struct {
 }
 
 // Stats returns stats about the points processed.
-func (itr *fieldKeysIterator) Stats() influxql.IteratorStats { return influxql.IteratorStats{} }
+func (itr *fieldKeysIterator) Stats() query.IteratorStats { return query.IteratorStats{} }
 
 // Close closes the iterator.
 func (itr *fieldKeysIterator) Close() error { return nil }
 
 // Next emits the next tag key name.
-func (itr *fieldKeysIterator) Next() (*influxql.FloatPoint, error) {
+func (itr *fieldKeysIterator) Next() (*query.FloatPoint, error) {
 	for {
 		// If there are no more keys then move to the next measurements.
 		if len(itr.buf.fields) == 0 {
@@ -1404,7 +1429,7 @@ func (itr *fieldKeysIterator) Next() (*influxql.FloatPoint, error) {
 
 		// Return next key.
 		field := itr.buf.fields[0]
-		p := &influxql.FloatPoint{
+		p := &query.FloatPoint{
 			Name: string(itr.buf.name),
 			Aux:  []interface{}{field.Name, field.Type.String()},
 		}
@@ -1415,7 +1440,7 @@ func (itr *fieldKeysIterator) Next() (*influxql.FloatPoint, error) {
 }
 
 // NewTagKeysIterator returns a new instance of TagKeysIterator.
-func NewTagKeysIterator(sh *Shard, opt influxql.IteratorOptions) (influxql.Iterator, error) {
+func NewTagKeysIterator(sh *Shard, opt query.IteratorOptions) (query.Iterator, error) {
 	fn := func(name []byte) ([][]byte, error) {
 		var keys [][]byte
 		if err := sh.engine.ForEachMeasurementTagKey(name, func(key []byte) error {
@@ -1432,7 +1457,7 @@ func NewTagKeysIterator(sh *Shard, opt influxql.IteratorOptions) (influxql.Itera
 // measurementKeyFunc is the function called by measurementKeysIterator.
 type measurementKeyFunc func(name []byte) ([][]byte, error)
 
-func newMeasurementKeysIterator(sh *Shard, fn measurementKeyFunc, opt influxql.IteratorOptions) (*measurementKeysIterator, error) {
+func newMeasurementKeysIterator(sh *Shard, fn measurementKeyFunc, opt query.IteratorOptions) (*measurementKeysIterator, error) {
 	itr := &measurementKeysIterator{fn: fn}
 
 	names, err := sh.engine.MeasurementNamesByExpr(opt.Condition)
@@ -1455,13 +1480,13 @@ type measurementKeysIterator struct {
 }
 
 // Stats returns stats about the points processed.
-func (itr *measurementKeysIterator) Stats() influxql.IteratorStats { return influxql.IteratorStats{} }
+func (itr *measurementKeysIterator) Stats() query.IteratorStats { return query.IteratorStats{} }
 
 // Close closes the iterator.
 func (itr *measurementKeysIterator) Close() error { return nil }
 
 // Next emits the next tag key name.
-func (itr *measurementKeysIterator) Next() (*influxql.FloatPoint, error) {
+func (itr *measurementKeysIterator) Next() (*query.FloatPoint, error) {
 	for {
 		// If there are no more keys then move to the next measurements.
 		if len(itr.buf.keys) == 0 {
@@ -1480,7 +1505,7 @@ func (itr *measurementKeysIterator) Next() (*influxql.FloatPoint, error) {
 		}
 
 		// Return next key.
-		p := &influxql.FloatPoint{
+		p := &query.FloatPoint{
 			Name: string(itr.buf.name),
 			Aux:  []interface{}{string(itr.buf.keys[0])},
 		}

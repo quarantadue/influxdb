@@ -25,6 +25,7 @@ import (
 	"github.com/influxdata/influxdb/pkg/escape"
 	"github.com/influxdata/influxdb/pkg/estimator"
 	"github.com/influxdata/influxdb/pkg/estimator/hll"
+	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/uber-go/zap"
 )
@@ -315,8 +316,8 @@ func (i *Index) MeasurementTagKeyValuesByExpr(name []byte, keys []string, expr i
 
 	// Iterate all series to collect tag values.
 	for _, id := range ids {
-		s, ok := mm.seriesByID[id]
-		if !ok {
+		s := mm.SeriesByID(id)
+		if s == nil {
 			continue
 		}
 
@@ -613,25 +614,8 @@ func (i *Index) DropSeries(key []byte) error {
 	return nil
 }
 
-// ForEachMeasurementSeriesByExpr iterates over all series in a measurement filtered by an expression.
-func (i *Index) ForEachMeasurementSeriesByExpr(name []byte, expr influxql.Expr, fn func(tags models.Tags) error) error {
-	i.mu.RLock()
-	mm := i.measurements[string(name)]
-	i.mu.RUnlock()
-
-	if mm == nil {
-		return nil
-	}
-
-	if err := mm.ForEachSeriesByExpr(expr, fn); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // TagSets returns a list of tag sets.
-func (i *Index) TagSets(shardID uint64, name []byte, opt influxql.IteratorOptions) ([]*influxql.TagSet, error) {
+func (i *Index) TagSets(shardID uint64, name []byte, opt query.IteratorOptions) ([]*query.TagSet, error) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 
@@ -720,7 +704,7 @@ func (i *Index) MeasurementSeriesKeysByExpr(name []byte, condition influxql.Expr
 }
 
 // SeriesPointIterator returns an influxql iterator over all series.
-func (i *Index) SeriesPointIterator(opt influxql.IteratorOptions) (influxql.Iterator, error) {
+func (i *Index) SeriesPointIterator(opt query.IteratorOptions) (query.Iterator, error) {
 	// Read and sort all measurements.
 	mms := make(Measurements, 0, len(i.measurements))
 	for _, mm := range i.measurements {
@@ -729,8 +713,9 @@ func (i *Index) SeriesPointIterator(opt influxql.IteratorOptions) (influxql.Iter
 	sort.Sort(mms)
 
 	return &seriesPointIterator{
-		mms: mms,
-		point: influxql.FloatPoint{
+		database: i.database,
+		mms:      mms,
+		point: query.FloatPoint{
 			Aux: make([]interface{}, len(opt.Aux)),
 		},
 		opt: opt,
@@ -896,7 +881,7 @@ func (i *ShardIndex) CreateSeriesIfNotExists(key, name []byte, tags models.Tags)
 }
 
 // TagSets returns a list of tag sets based on series filtering.
-func (i *ShardIndex) TagSets(name []byte, opt influxql.IteratorOptions) ([]*influxql.TagSet, error) {
+func (i *ShardIndex) TagSets(name []byte, opt query.IteratorOptions) ([]*query.TagSet, error) {
 	return i.Index.TagSets(i.id, name, opt)
 }
 
@@ -911,24 +896,25 @@ func NewShardIndex(id uint64, database, path string, opt tsdb.EngineOptions) tsd
 
 // seriesPointIterator emits series as influxql points.
 type seriesPointIterator struct {
-	mms  Measurements
-	keys struct {
-		buf []string
+	database string
+	mms      Measurements
+	keys     struct {
+		buf []*Series
 		i   int
 	}
 
-	point influxql.FloatPoint // reusable point
-	opt   influxql.IteratorOptions
+	point query.FloatPoint // reusable point
+	opt   query.IteratorOptions
 }
 
 // Stats returns stats about the points processed.
-func (itr *seriesPointIterator) Stats() influxql.IteratorStats { return influxql.IteratorStats{} }
+func (itr *seriesPointIterator) Stats() query.IteratorStats { return query.IteratorStats{} }
 
 // Close closes the iterator.
 func (itr *seriesPointIterator) Close() error { return nil }
 
 // Next emits the next point in the iterator.
-func (itr *seriesPointIterator) Next() (*influxql.FloatPoint, error) {
+func (itr *seriesPointIterator) Next() (*query.FloatPoint, error) {
 	for {
 		// Load next measurement's keys if there are no more remaining.
 		if itr.keys.i >= len(itr.keys.buf) {
@@ -941,14 +927,18 @@ func (itr *seriesPointIterator) Next() (*influxql.FloatPoint, error) {
 		}
 
 		// Read the next key.
-		key := itr.keys.buf[itr.keys.i]
+		series := itr.keys.buf[itr.keys.i]
 		itr.keys.i++
+
+		if !itr.opt.Authorizer.AuthorizeSeriesRead(itr.database, series.measurement.name, series.tags) {
+			continue
+		}
 
 		// Write auxiliary fields.
 		for i, f := range itr.opt.Aux {
 			switch f.Val {
 			case "key":
-				itr.point.Aux[i] = key
+				itr.point.Aux[i] = series.Key
 			}
 		}
 		return &itr.point, nil
@@ -975,8 +965,12 @@ func (itr *seriesPointIterator) nextKeys() error {
 		} else if len(ids) == 0 {
 			continue
 		}
-		itr.keys.buf = mm.AppendSeriesKeysByID(itr.keys.buf, ids)
-		sort.Strings(itr.keys.buf)
+		itr.keys.buf = mm.SeriesByIDSlice(ids)
+
+		// Sort series by key
+		sort.Slice(itr.keys.buf, func(i, j int) bool {
+			return itr.keys.buf[i].Key < itr.keys.buf[j].Key
+		})
 
 		return nil
 	}
