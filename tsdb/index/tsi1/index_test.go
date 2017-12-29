@@ -2,13 +2,15 @@ package tsi1_test
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"testing"
 
-	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxdb/tsdb/index/tsi1"
 )
 
@@ -17,7 +19,10 @@ const M, K = 4096, 6
 
 // Ensure index can iterate over all measurement names.
 func TestIndex_ForEachMeasurementName(t *testing.T) {
-	idx := MustOpenIndex()
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+
+	idx := MustOpenIndex(sfile.SeriesFile, 1)
 	defer idx.Close()
 
 	// Add series to index.
@@ -70,7 +75,10 @@ func TestIndex_ForEachMeasurementName(t *testing.T) {
 
 // Ensure index can return whether a measurement exists.
 func TestIndex_MeasurementExists(t *testing.T) {
-	idx := MustOpenIndex()
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+
+	idx := MustOpenIndex(sfile.SeriesFile, 1)
 	defer idx.Close()
 
 	// Add series to index.
@@ -91,7 +99,7 @@ func TestIndex_MeasurementExists(t *testing.T) {
 	})
 
 	// Delete one series.
-	if err := idx.DropSeries(models.MakeKey([]byte("cpu"), models.NewTags(map[string]string{"region": "east"}))); err != nil {
+	if err := idx.DropSeries(models.MakeKey([]byte("cpu"), models.NewTags(map[string]string{"region": "east"})), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,7 +113,7 @@ func TestIndex_MeasurementExists(t *testing.T) {
 	})
 
 	// Delete second series.
-	if err := idx.DropSeries(models.MakeKey([]byte("cpu"), models.NewTags(map[string]string{"region": "west"}))); err != nil {
+	if err := idx.DropSeries(models.MakeKey([]byte("cpu"), models.NewTags(map[string]string{"region": "west"})), 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,63 +128,11 @@ func TestIndex_MeasurementExists(t *testing.T) {
 }
 
 // Ensure index can return a list of matching measurements.
-func TestIndex_MeasurementNamesByExpr(t *testing.T) {
-	idx := MustOpenIndex()
-	defer idx.Close()
-
-	// Add series to index.
-	if err := idx.CreateSeriesSliceIfNotExists([]Series{
-		{Name: []byte("cpu"), Tags: models.NewTags(map[string]string{"region": "east"})},
-		{Name: []byte("cpu"), Tags: models.NewTags(map[string]string{"region": "west"})},
-		{Name: []byte("disk"), Tags: models.NewTags(map[string]string{"region": "north"})},
-		{Name: []byte("mem"), Tags: models.NewTags(map[string]string{"region": "west", "country": "us"})},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Retrieve measurements by expression
-	idx.Run(t, func(t *testing.T) {
-		t.Run("EQ", func(t *testing.T) {
-			names, err := idx.MeasurementNamesByExpr(influxql.MustParseExpr(`region = 'west'`))
-			if err != nil {
-				t.Fatal(err)
-			} else if !reflect.DeepEqual(names, [][]byte{[]byte("cpu"), []byte("mem")}) {
-				t.Fatalf("unexpected names: %v", names)
-			}
-		})
-
-		t.Run("NEQ", func(t *testing.T) {
-			names, err := idx.MeasurementNamesByExpr(influxql.MustParseExpr(`region != 'east'`))
-			if err != nil {
-				t.Fatal(err)
-			} else if !reflect.DeepEqual(names, [][]byte{[]byte("disk"), []byte("mem")}) {
-				t.Fatalf("unexpected names: %v", names)
-			}
-		})
-
-		t.Run("EQREGEX", func(t *testing.T) {
-			names, err := idx.MeasurementNamesByExpr(influxql.MustParseExpr(`region =~ /east|west/`))
-			if err != nil {
-				t.Fatal(err)
-			} else if !reflect.DeepEqual(names, [][]byte{[]byte("cpu"), []byte("mem")}) {
-				t.Fatalf("unexpected names: %v", names)
-			}
-		})
-
-		t.Run("NEQREGEX", func(t *testing.T) {
-			names, err := idx.MeasurementNamesByExpr(influxql.MustParseExpr(`country !~ /^u/`))
-			if err != nil {
-				t.Fatal(err)
-			} else if !reflect.DeepEqual(names, [][]byte{[]byte("cpu"), []byte("disk")}) {
-				t.Fatalf("unexpected names: %v", names)
-			}
-		})
-	})
-}
-
-// Ensure index can return a list of matching measurements.
 func TestIndex_MeasurementNamesByRegex(t *testing.T) {
-	idx := MustOpenIndex()
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+
+	idx := MustOpenIndex(sfile.SeriesFile, 1)
 	defer idx.Close()
 
 	// Add series to index.
@@ -201,7 +157,10 @@ func TestIndex_MeasurementNamesByRegex(t *testing.T) {
 
 // Ensure index can delete a measurement and all related keys, values, & series.
 func TestIndex_DropMeasurement(t *testing.T) {
-	idx := MustOpenIndex()
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+
+	idx := MustOpenIndex(sfile.SeriesFile, 1)
 	defer idx.Close()
 
 	// Add series to index.
@@ -229,7 +188,10 @@ func TestIndex_DropMeasurement(t *testing.T) {
 		}
 
 		// Obtain file set to perform lower level checks.
-		fs := idx.RetainFileSet()
+		fs, err := idx.PartitionAt(0).RetainFileSet()
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer fs.Release()
 
 		// Verify tags & values are gone.
@@ -243,21 +205,135 @@ func TestIndex_DropMeasurement(t *testing.T) {
 	})
 }
 
+func TestIndex_Open(t *testing.T) {
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+
+	// Opening a fresh index should set the MANIFEST version to current version.
+	idx := NewIndex(sfile.SeriesFile, tsi1.DefaultPartitionN)
+	t.Run("open new index", func(t *testing.T) {
+		if err := idx.Open(); err != nil {
+			t.Fatal(err)
+		}
+
+		// Check version set appropriately.
+		for i := 0; uint64(i) < tsi1.DefaultPartitionN; i++ {
+			partition := idx.PartitionAt(i)
+			if got, exp := partition.Manifest().Version, 1; got != exp {
+				t.Fatalf("got index version %d, expected %d", got, exp)
+			}
+		}
+	})
+
+	// Reopening an open index should return an error.
+	t.Run("reopen open index", func(t *testing.T) {
+		err := idx.Open()
+		if err == nil {
+			idx.Close()
+			t.Fatal("didn't get an error on reopen, but expected one")
+		}
+		idx.Close()
+	})
+
+	// Opening an incompatible index should return an error.
+	incompatibleVersions := []int{-1, 0, 2}
+	for _, v := range incompatibleVersions {
+		t.Run(fmt.Sprintf("incompatible index version: %d", v), func(t *testing.T) {
+			sfile := MustOpenSeriesFile()
+			defer sfile.Close()
+			idx = NewIndex(sfile.SeriesFile, tsi1.DefaultPartitionN)
+			// Manually create a MANIFEST file for an incompatible index version.
+			// under one of the partitions.
+			partitionPath := filepath.Join(idx.Path(), "2")
+			os.MkdirAll(partitionPath, 0777)
+
+			mpath := filepath.Join(partitionPath, tsi1.ManifestFileName)
+			m := tsi1.NewManifest(mpath)
+			m.Levels = nil
+			m.Version = v // Set example MANIFEST version.
+			if _, err := m.Write(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Log the MANIFEST file.
+			data, err := ioutil.ReadFile(mpath)
+			if err != nil {
+				panic(err)
+			}
+			t.Logf("Incompatible MANIFEST: %s", data)
+
+			// Opening this index should return an error because the MANIFEST has an
+			// incompatible version.
+			err = idx.Open()
+			if err != tsi1.ErrIncompatibleVersion {
+				idx.Close()
+				t.Fatalf("got error %v, expected %v", err, tsi1.ErrIncompatibleVersion)
+			}
+		})
+	}
+}
+
+func TestIndex_Manifest(t *testing.T) {
+	t.Run("current MANIFEST", func(t *testing.T) {
+		sfile := MustOpenSeriesFile()
+		defer sfile.Close()
+		idx := MustOpenIndex(sfile.SeriesFile, tsi1.DefaultPartitionN)
+
+		// Check version set appropriately.
+		for i := 0; uint64(i) < tsi1.DefaultPartitionN; i++ {
+			partition := idx.PartitionAt(i)
+			if got, exp := partition.Manifest().Version, tsi1.Version; got != exp {
+				t.Fatalf("got MANIFEST version %d, expected %d", got, exp)
+			}
+		}
+	})
+}
+
+func TestIndex_DiskSizeBytes(t *testing.T) {
+	sfile := MustOpenSeriesFile()
+	defer sfile.Close()
+	idx := MustOpenIndex(sfile.SeriesFile, tsi1.DefaultPartitionN)
+	defer idx.Close()
+
+	// Add series to index.
+	if err := idx.CreateSeriesSliceIfNotExists([]Series{
+		{Name: []byte("cpu"), Tags: models.NewTags(map[string]string{"region": "east"})},
+		{Name: []byte("cpu"), Tags: models.NewTags(map[string]string{"region": "west"})},
+		{Name: []byte("disk"), Tags: models.NewTags(map[string]string{"region": "north"})},
+		{Name: []byte("mem"), Tags: models.NewTags(map[string]string{"region": "west", "country": "us"})},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify on disk size is the same in each stage.
+	// There are four series, and each series id is 8 bytes plus one byte for the tombstone header
+	expSize := int64(4 * 9)
+
+	// Each MANIFEST file is 419 bytes and there are tsi1.DefaultPartitionN of them
+	expSize += int64(tsi1.DefaultPartitionN * 419)
+
+	idx.Run(t, func(t *testing.T) {
+		if got, exp := idx.DiskSizeBytes(), expSize; got != exp {
+			t.Fatalf("got %d bytes, expected %d", got, exp)
+		}
+	})
+}
+
 // Index is a test wrapper for tsi1.Index.
 type Index struct {
 	*tsi1.Index
 }
 
 // NewIndex returns a new instance of Index at a temporary path.
-func NewIndex() *Index {
-	idx := &Index{Index: tsi1.NewIndex()}
-	idx.Path = MustTempDir()
+func NewIndex(sfile *tsdb.SeriesFile, partitionN uint64) *Index {
+	idx := &Index{Index: tsi1.NewIndex(sfile, tsi1.WithPath(MustTempDir()))}
+	idx.PartitionN = partitionN
 	return idx
 }
 
 // MustOpenIndex returns a new, open index. Panic on error.
-func MustOpenIndex() *Index {
-	idx := NewIndex()
+func MustOpenIndex(sfile *tsdb.SeriesFile, partitionN uint64) *Index {
+	idx := NewIndex(sfile, partitionN)
 	if err := idx.Open(); err != nil {
 		panic(err)
 	}
@@ -266,7 +342,7 @@ func MustOpenIndex() *Index {
 
 // Close closes and removes the index directory.
 func (idx *Index) Close() error {
-	defer os.RemoveAll(idx.Path)
+	defer os.RemoveAll(idx.Path())
 	return idx.Index.Close()
 }
 
@@ -276,9 +352,11 @@ func (idx *Index) Reopen() error {
 		return err
 	}
 
-	path := idx.Path
-	idx.Index = tsi1.NewIndex()
-	idx.Path = path
+	sfile := idx.SeriesFile()
+	path, partitionN := idx.Path(), idx.PartitionN
+
+	idx.Index = tsi1.NewIndex(sfile, tsi1.WithPath(path))
+	idx.PartitionN = partitionN
 	if err := idx.Open(); err != nil {
 		return err
 	}
@@ -321,9 +399,17 @@ func (idx *Index) Run(t *testing.T, fn func(t *testing.T)) {
 // CreateSeriesSliceIfNotExists creates multiple series at a time.
 func (idx *Index) CreateSeriesSliceIfNotExists(a []Series) error {
 	for i, s := range a {
-		if err := idx.CreateSeriesIfNotExists(nil, s.Name, s.Tags); err != nil {
+		if err := idx.CreateSeriesListIfNotExists(nil, [][]byte{s.Name}, []models.Tags{s.Tags}); err != nil {
 			return fmt.Errorf("i=%d, name=%s, tags=%v, err=%s", i, s.Name, s.Tags, err)
 		}
 	}
 	return nil
+}
+
+func BytesToStrings(a [][]byte) []string {
+	s := make([]string, 0, len(a))
+	for _, v := range a {
+		s = append(s, string(v))
+	}
+	return s
 }

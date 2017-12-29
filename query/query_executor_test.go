@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/query"
+	"github.com/influxdata/influxql"
 )
 
 var errUnexpected = errors.New("unexpected error")
@@ -81,6 +81,171 @@ func TestQueryExecutor_KillQuery(t *testing.T) {
 	result := <-results
 	if result.Err != query.ErrQueryInterrupted {
 		t.Errorf("unexpected error: %s", result.Err)
+	}
+}
+
+func TestQueryExecutor_KillQuery_Zombie(t *testing.T) {
+	q, err := influxql.ParseQuery(`SELECT count(value) FROM cpu`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	qid := make(chan uint64)
+	done := make(chan struct{})
+
+	e := NewQueryExecutor()
+	e.StatementExecutor = &StatementExecutor{
+		ExecuteStatementFn: func(stmt influxql.Statement, ctx query.ExecutionContext) error {
+			switch stmt.(type) {
+			case *influxql.KillQueryStatement, *influxql.ShowQueriesStatement:
+				return e.TaskManager.ExecuteStatement(stmt, ctx)
+			}
+
+			qid <- ctx.QueryID
+			select {
+			case <-ctx.InterruptCh:
+				select {
+				case <-done:
+					// Keep the query running until we run SHOW QUERIES.
+				case <-time.After(100 * time.Millisecond):
+					// Ensure that we don't have a lingering goroutine.
+				}
+				return query.ErrQueryInterrupted
+			case <-time.After(100 * time.Millisecond):
+				t.Error("killing the query did not close the channel after 100 milliseconds")
+				return errUnexpected
+			}
+		},
+	}
+
+	results := e.ExecuteQuery(q, query.ExecutionOptions{}, nil)
+	q, err = influxql.ParseQuery(fmt.Sprintf("KILL QUERY %d", <-qid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	discardOutput(e.ExecuteQuery(q, query.ExecutionOptions{}, nil))
+
+	// Display the queries and ensure that the original is still in there.
+	q, err = influxql.ParseQuery("SHOW QUERIES")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := e.ExecuteQuery(q, query.ExecutionOptions{}, nil)
+
+	// The killed query should still be there.
+	task := <-tasks
+	if len(task.Series) != 1 {
+		t.Errorf("expected %d series, got %d", 1, len(task.Series))
+	} else if len(task.Series[0].Values) != 2 {
+		t.Errorf("expected %d rows, got %d", 2, len(task.Series[0].Values))
+	}
+	close(done)
+
+	// The original query should return.
+	result := <-results
+	if result.Err != query.ErrQueryInterrupted {
+		t.Errorf("unexpected error: %s", result.Err)
+	}
+}
+
+func TestQueryExecutor_KillQuery_CloseTaskManager(t *testing.T) {
+	q, err := influxql.ParseQuery(`SELECT count(value) FROM cpu`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	qid := make(chan uint64)
+
+	// Open a channel to stall the statement executor forever. This keeps the statement executor
+	// running even after we kill the query which can happen with some queries. We only close it once
+	// the test has finished running.
+	done := make(chan struct{})
+	defer close(done)
+
+	e := NewQueryExecutor()
+	e.StatementExecutor = &StatementExecutor{
+		ExecuteStatementFn: func(stmt influxql.Statement, ctx query.ExecutionContext) error {
+			switch stmt.(type) {
+			case *influxql.KillQueryStatement, *influxql.ShowQueriesStatement:
+				return e.TaskManager.ExecuteStatement(stmt, ctx)
+			}
+
+			qid <- ctx.QueryID
+			<-done
+			return nil
+		},
+	}
+
+	// Kill the query. This should switch it into a zombie state.
+	go discardOutput(e.ExecuteQuery(q, query.ExecutionOptions{}, nil))
+	q, err = influxql.ParseQuery(fmt.Sprintf("KILL QUERY %d", <-qid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	discardOutput(e.ExecuteQuery(q, query.ExecutionOptions{}, nil))
+
+	// Display the queries and ensure that the original is still in there.
+	q, err = influxql.ParseQuery("SHOW QUERIES")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := e.ExecuteQuery(q, query.ExecutionOptions{}, nil)
+
+	// The killed query should still be there.
+	task := <-tasks
+	if len(task.Series) != 1 {
+		t.Errorf("expected %d series, got %d", 1, len(task.Series))
+	} else if len(task.Series[0].Values) != 2 {
+		t.Errorf("expected %d rows, got %d", 2, len(task.Series[0].Values))
+	}
+
+	// Close the task manager to ensure it doesn't cause a panic.
+	if err := e.TaskManager.Close(); err != nil {
+		t.Errorf("unexpected error: %s", err)
+	}
+}
+
+func TestQueryExecutor_KillQuery_AlreadyKilled(t *testing.T) {
+	q, err := influxql.ParseQuery(`SELECT count(value) FROM cpu`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	qid := make(chan uint64)
+
+	// Open a channel to stall the statement executor forever. This keeps the statement executor
+	// running even after we kill the query which can happen with some queries. We only close it once
+	// the test has finished running.
+	done := make(chan struct{})
+	defer close(done)
+
+	e := NewQueryExecutor()
+	e.StatementExecutor = &StatementExecutor{
+		ExecuteStatementFn: func(stmt influxql.Statement, ctx query.ExecutionContext) error {
+			switch stmt.(type) {
+			case *influxql.KillQueryStatement, *influxql.ShowQueriesStatement:
+				return e.TaskManager.ExecuteStatement(stmt, ctx)
+			}
+
+			qid <- ctx.QueryID
+			<-done
+			return nil
+		},
+	}
+
+	// Kill the query. This should switch it into a zombie state.
+	go discardOutput(e.ExecuteQuery(q, query.ExecutionOptions{}, nil))
+	q, err = influxql.ParseQuery(fmt.Sprintf("KILL QUERY %d", <-qid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	discardOutput(e.ExecuteQuery(q, query.ExecutionOptions{}, nil))
+
+	// Now attempt to kill it again. We should get an error.
+	results := e.ExecuteQuery(q, query.ExecutionOptions{}, nil)
+	result := <-results
+	if got, want := result.Err, query.ErrAlreadyKilled; got != want {
+		t.Errorf("unexpected error: got=%v want=%v", got, want)
 	}
 }
 
@@ -165,7 +330,9 @@ func TestQueryExecutor_ShowQueries(t *testing.T) {
 	results := e.ExecuteQuery(q, query.ExecutionOptions{}, nil)
 	result := <-results
 	if len(result.Series) != 1 {
-		t.Errorf("expected %d rows, got %d", 1, len(result.Series))
+		t.Errorf("expected %d series, got %d", 1, len(result.Series))
+	} else if len(result.Series[0].Values) != 1 {
+		t.Errorf("expected %d row, got %d", 1, len(result.Series[0].Values))
 	}
 	if result.Err != nil {
 		t.Errorf("unexpected error: %s", result.Err)

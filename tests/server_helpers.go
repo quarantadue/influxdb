@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type Server interface {
 	CreateDatabase(db string) (*meta.DatabaseInfo, error)
 	CreateDatabaseAndRetentionPolicy(db string, rp *meta.RetentionPolicySpec, makeDefault bool) error
 	CreateSubscription(database, rp, name, mode string, destinations []string) error
+	DropDatabase(db string) error
 	Reset() error
 
 	Query(query string) (results string, err error)
@@ -252,6 +254,15 @@ type LocalServer struct {
 	Config *run.Config
 }
 
+// Open opens the server. If running this test on a 32-bit platform it reduces
+// the size of series files so that they can all be addressable in the process.
+func (s *LocalServer) Open() error {
+	if runtime.GOARCH == "386" {
+		s.Server.TSDBStore.SeriesFileMaxSize = 1 << 27 // 128MB
+	}
+	return s.Server.Open()
+}
+
 // Close shuts down the server and removes all temporary paths.
 func (s *LocalServer) Close() {
 	s.mu.Lock()
@@ -316,6 +327,10 @@ func (s *LocalServer) CreateSubscription(database, rp, name, mode string, destin
 func (s *LocalServer) DropDatabase(db string) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if err := s.TSDBStore.DeleteDatabase(db); err != nil {
+		return err
+	}
 	return s.MetaClient.DropDatabase(db)
 }
 
@@ -333,6 +348,11 @@ func (s *LocalServer) Reset() error {
 func (s *LocalServer) WritePoints(database, retentionPolicy string, consistencyLevel models.ConsistencyLevel, user meta.User, points []models.Point) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
+	if s.PointsWriter == nil {
+		return fmt.Errorf("server closed")
+	}
+
 	return s.PointsWriter.WritePoints(database, retentionPolicy, consistencyLevel, user, points)
 }
 
@@ -487,6 +507,8 @@ func NewConfig() *run.Config {
 	c.HTTPD.LogEnabled = verboseServerLogs
 
 	c.Monitor.StoreEnabled = false
+
+	c.Storage.Enabled = false
 
 	return c
 }

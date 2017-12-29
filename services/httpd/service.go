@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/models"
-	"github.com/uber-go/zap"
+	"go.uber.org/zap"
 )
 
 // statistics gathered by the httpd package.
@@ -38,6 +38,10 @@ const (
 	statClientError                  = "clientError"          // Number of HTTP responses due to client error.
 	statServerError                  = "serverError"          // Number of HTTP responses due to server error.
 	statRecoveredPanics              = "recoveredPanics"      // Number of panics recovered by HTTP handler.
+
+	// Prometheus stats
+	statPromWriteRequest = "promWriteReq" // Number of write requests to the promtheus endpoint
+	statPromReadRequest  = "promReadReq"  // Number of read requests to the prometheus endpoint
 )
 
 // Service manages the listener and handler for an HTTP endpoint.
@@ -56,7 +60,7 @@ type Service struct {
 
 	Handler *Handler
 
-	Logger zap.Logger
+	Logger *zap.Logger
 }
 
 // NewService returns a new instance of Service.
@@ -71,7 +75,7 @@ func NewService(c Config) *Service {
 		unixSocket: c.UnixSocketEnabled,
 		bindSocket: c.BindSocket,
 		Handler:    NewHandler(c),
-		Logger:     zap.New(zap.NullEncoder()),
+		Logger:     zap.NewNop(),
 	}
 	if s.key == "" {
 		s.key = s.cert
@@ -173,7 +177,7 @@ func (s *Service) Close() error {
 }
 
 // WithLogger sets the logger for the service.
-func (s *Service) WithLogger(log zap.Logger) {
+func (s *Service) WithLogger(log *zap.Logger) {
 	s.Logger = log.With(zap.String("service", "httpd"))
 	s.Handler.Logger = s.Logger
 }
@@ -192,6 +196,12 @@ func (s *Service) Addr() net.Addr {
 // Statistics returns statistics for periodic monitoring.
 func (s *Service) Statistics(tags map[string]string) []models.Statistic {
 	return s.Handler.Statistics(models.NewTags(map[string]string{"bind": s.addr}).Merge(tags).Map())
+}
+
+// BoundHTTPAddr returns the string version of the address that the HTTP server is listening on.
+// This is useful if you start an ephemeral server in test with bind address localhost:0.
+func (s *Service) BoundHTTPAddr() string {
+	return s.ln.Addr().String()
 }
 
 // serveTCP serves the handler from the TCP listener.

@@ -3,8 +3,8 @@ package query_test
 import (
 	"testing"
 
-	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/query"
+	"github.com/influxdata/influxql"
 )
 
 func TestCompile_Success(t *testing.T) {
@@ -80,6 +80,7 @@ func TestCompile_Success(t *testing.T) {
 		`SELECT max(value) FROM (SELECT value + total FROM cpu) WHERE time >= now() - 1m GROUP BY time(10s)`,
 		`SELECT value FROM cpu WHERE time >= '2000-01-01T00:00:00Z' AND time <= '2000-01-01T01:00:00Z'`,
 		`SELECT value FROM (SELECT value FROM cpu) ORDER BY time DESC`,
+		`SELECT count(distinct(value)), max(value) FROM cpu`,
 	} {
 		t.Run(tt, func(t *testing.T) {
 			stmt, err := influxql.ParseStatement(tt)
@@ -121,7 +122,6 @@ func TestCompile_Failures(t *testing.T) {
 		{s: `SELECT mean() FROM cpu`, err: `invalid number of arguments for mean, expected 1, got 0`},
 		{s: `SELECT mean(value, host) FROM cpu`, err: `invalid number of arguments for mean, expected 1, got 2`},
 		{s: `SELECT distinct(value), max(value) FROM cpu`, err: `aggregate function distinct() cannot be combined with other functions or fields`},
-		{s: `SELECT count(distinct(value)), max(value) FROM cpu`, err: `aggregate function distinct() cannot be combined with other functions or fields`},
 		{s: `SELECT count(distinct()) FROM cpu`, err: `distinct function requires at least one argument`},
 		{s: `SELECT count(distinct(value, host)) FROM cpu`, err: `distinct function can only have one argument`},
 		{s: `SELECT count(distinct(2)) FROM cpu`, err: `expected field argument in distinct()`},
@@ -146,7 +146,8 @@ func TestCompile_Failures(t *testing.T) {
 		{s: `SELECT bottom(value, 2.5) FROM cpu`, err: `expected integer as last argument in bottom(), found 2.500`},
 		{s: `SELECT bottom(value, -1) FROM cpu`, err: `limit (-1) in bottom function must be at least 1`},
 		{s: `SELECT bottom(value, 3) FROM cpu LIMIT 2`, err: `limit (3) in bottom function can not be larger than the LIMIT (2) in the select statement`},
-		{s: `SELECT value FROM cpu WHERE time >= now() - 10m OR time < now() - 5m`, err: `cannot use OR with time conditions`},
+		// TODO(jsternberg): This query is wrong, but we cannot enforce this because of previous behavior: https://github.com/influxdata/influxdb/pull/8771
+		//{s: `SELECT value FROM cpu WHERE time >= now() - 10m OR time < now() - 5m`, err: `cannot use OR with time conditions`},
 		{s: `SELECT value FROM cpu WHERE value`, err: `invalid condition expression: value`},
 		{s: `SELECT count(value), * FROM cpu`, err: `mixing aggregate and non-aggregate queries is not supported`},
 		{s: `SELECT max(*), host FROM cpu`, err: `mixing aggregate and non-aggregate queries is not supported`},
@@ -197,10 +198,6 @@ func TestCompile_Failures(t *testing.T) {
 		{s: `SELECT field1 FROM foo fill(none)`, err: `fill(none) must be used with a function`},
 		{s: `SELECT field1 FROM foo fill(linear)`, err: `fill(linear) must be used with a function`},
 		{s: `SELECT count(value), value FROM foo`, err: `mixing aggregate and non-aggregate queries is not supported`},
-		{s: `SELECT count(value) FROM foo group by time(1s)`, err: `aggregate functions with GROUP BY time require a WHERE time clause with a lower limit`},
-		{s: `SELECT count(value) FROM foo group by time(500ms)`, err: `aggregate functions with GROUP BY time require a WHERE time clause with a lower limit`},
-		{s: `SELECT count(value) FROM foo group by time(1s) where host = 'hosta.influxdb.org'`, err: `aggregate functions with GROUP BY time require a WHERE time clause with a lower limit`},
-		{s: `SELECT count(value) FROM foo group by time(1s) where time < now()`, err: `aggregate functions with GROUP BY time require a WHERE time clause with a lower limit`},
 		{s: `SELECT count(value) FROM foo group by time`, err: `time() is a function and expects at least one argument`},
 		{s: `SELECT count(value) FROM foo group by 'time'`, err: `only time and tag dimensions allowed`},
 		{s: `SELECT count(value) FROM foo where time > now() and time < now() group by time()`, err: `time dimension expected 1 or 2 arguments`},
@@ -313,7 +310,6 @@ func TestCompile_Failures(t *testing.T) {
 		{s: `SELECT count(foo + sum(bar)) FROM cpu`, err: `expected field argument in count()`},
 		{s: `SELECT (count(foo + sum(bar))) FROM cpu`, err: `expected field argument in count()`},
 		{s: `SELECT sum(value) + count(foo + sum(bar)) FROM cpu`, err: `expected field argument in count()`},
-		{s: `SELECT sum(mean) FROM (SELECT mean(value) FROM cpu GROUP BY time(1h))`, err: `aggregate functions with GROUP BY time require a WHERE time clause with a lower limit`},
 		{s: `SELECT top(value, 2), max(value) FROM cpu`, err: `selector function top() cannot be combined with other functions`},
 		{s: `SELECT bottom(value, 2), max(value) FROM cpu`, err: `selector function bottom() cannot be combined with other functions`},
 		{s: `SELECT min(derivative) FROM (SELECT derivative(mean(value), 1h) FROM myseries) where time < now() and time > now() - 1d`, err: `derivative aggregate requires a GROUP BY interval`},

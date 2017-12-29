@@ -12,10 +12,10 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/query"
 	internal "github.com/influxdata/influxdb/services/meta/internal"
+	"github.com/influxdata/influxql"
 )
 
 //go:generate protoc --gogo_out=. internal/meta.proto
@@ -744,6 +744,32 @@ func (data *Data) UnmarshalBinary(buf []byte) error {
 	}
 	data.unmarshal(&pb)
 	return nil
+}
+
+// TruncateShardGroups truncates any shard group that could contain timestamps beyond t.
+func (data *Data) TruncateShardGroups(t time.Time) {
+	for i := range data.Databases {
+		dbi := &data.Databases[i]
+
+		for j := range dbi.RetentionPolicies {
+			rpi := &dbi.RetentionPolicies[j]
+
+			for k := range rpi.ShardGroups {
+				sgi := &rpi.ShardGroups[k]
+
+				if !t.Before(sgi.EndTime) || sgi.Deleted() || (sgi.Truncated() && sgi.TruncatedAt.Before(t)) {
+					continue
+				}
+
+				if !t.After(sgi.StartTime) {
+					// future shardgroup
+					sgi.TruncatedAt = sgi.StartTime
+				} else {
+					sgi.TruncatedAt = t
+				}
+			}
+		}
+	}
 }
 
 // hasAdminUser exhaustively checks for the presence of at least one admin
@@ -1557,8 +1583,8 @@ func (leases *Leases) Acquire(name string, nodeID uint64) (*Lease, error) {
 	leases.mu.Lock()
 	defer leases.mu.Unlock()
 
-	l, ok := leases.m[name]
-	if ok {
+	l := leases.m[name]
+	if l != nil {
 		if time.Now().After(l.Expiration) || l.Owner == nodeID {
 			l.Expiration = time.Now().Add(leases.d)
 			l.Owner = nodeID

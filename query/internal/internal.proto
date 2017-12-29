@@ -16,6 +16,7 @@ message Point {
     optional uint64 UnsignedValue = 12;
 
     optional IteratorStats Stats = 11;
+    optional bytes Trace = 13;
 }
 
 message Aux {
@@ -46,6 +47,7 @@ message IteratorOptions {
     optional int64       Offset     = 13;
     optional int64       SLimit     = 14;
     optional int64       SOffset    = 15;
+    optional bool        StripName  = 22;
     optional bool        Dedupe     = 16;
     optional int64       MaxSeriesN = 18;
     optional bool        Ordered    = 20;
@@ -61,6 +63,7 @@ message Measurement {
     optional string Name            = 3;
     optional string Regex           = 4;
     optional bool   IsTarget        = 5;
+    optional string SystemIterator  = 6;
 }
 
 message Interval {

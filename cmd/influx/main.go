@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/influxdata/influxdb/client"
 	"github.com/influxdata/influxdb/cmd/influx/cli"
@@ -103,10 +104,16 @@ Examples:
     $ influx -database 'metrics' -execute 'select * from cpu' -format 'json' -pretty
 
     # Connect to a specific database on startup and set database context:
-    $ influx -database 'metrics' -host 'localhost' -port '8086'
-`)
+    $ influx -database 'metrics' -host 'localhost' -port '8086'`)
 	}
 	fs.Parse(os.Args[1:])
+
+	argsNotParsed := fs.Args()
+	if len(argsNotParsed) > 0 {
+		fmt.Fprintf(os.Stderr, "unknown arguments: %s\n", strings.Join(argsNotParsed, " "))
+		fs.Usage()
+		os.Exit(1)
+	}
 
 	if c.ShowVersion {
 		c.Version()

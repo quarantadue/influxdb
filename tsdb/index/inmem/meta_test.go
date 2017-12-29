@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/influxdata/influxdb/influxql"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/tsdb/index/inmem"
+	"github.com/influxdata/influxql"
 )
 
 // Test comparing SeriesIDs for equality.
@@ -90,6 +91,13 @@ func TestSeriesIDs_Reject(t *testing.T) {
 
 	if !exp.Equals(got) {
 		t.Fatalf("exp=%v, got=%v", exp, got)
+	}
+}
+
+func TestMeasurement_AddSeries_Nil(t *testing.T) {
+	m := inmem.NewMeasurement("foo", "cpu")
+	if m.AddSeries(nil) {
+		t.Fatalf("AddSeries mismatch: exp false, got true")
 	}
 }
 
@@ -207,7 +215,7 @@ func benchmarkTagSets(b *testing.B, n int, opt query.IteratorOptions) {
 		tags := map[string]string{"tag1": "value1", "tag2": "value2"}
 		s := inmem.NewSeries([]byte(fmt.Sprintf("m,tag1=value1,tag2=value2")), models.NewTags(tags))
 		s.ID = uint64(i)
-		s.AssignShard(0)
+		s.AssignShard(0, time.Now().UnixNano())
 		m.AddSeries(s)
 	}
 

@@ -21,7 +21,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/limiter"
 	"github.com/influxdata/influxdb/pkg/pool"
-	"github.com/uber-go/zap"
+	"go.uber.org/zap"
 )
 
 const (
@@ -104,8 +104,8 @@ type WAL struct {
 	syncDelay time.Duration
 
 	// WALOutput is the writer used by the logger.
-	logger       zap.Logger // Logger to be used for important messages
-	traceLogger  zap.Logger // Logger to be used when trace-logging is on.
+	logger       *zap.Logger // Logger to be used for important messages
+	traceLogger  *zap.Logger // Logger to be used when trace-logging is on.
 	traceLogging bool
 
 	// SegmentSize is the file size at which a segment file will be rotated
@@ -118,7 +118,7 @@ type WAL struct {
 
 // NewWAL initializes a new WAL at the given directory.
 func NewWAL(path string) *WAL {
-	logger := zap.New(zap.NullEncoder())
+	logger := zap.NewNop()
 	return &WAL{
 		path: path,
 
@@ -142,7 +142,7 @@ func (l *WAL) enableTraceLogging(enabled bool) {
 }
 
 // WithLogger sets the WAL's logger.
-func (l *WAL) WithLogger(log zap.Logger) {
+func (l *WAL) WithLogger(log *zap.Logger) {
 	l.logger = log.With(zap.String("service", "wal"))
 
 	if l.traceLogging {
@@ -772,6 +772,10 @@ func (w *WriteWALEntry) UnmarshalBinary(b []byte) error {
 		nvals := int(binary.BigEndian.Uint32(b[i : i+4]))
 		i += 4
 
+		if nvals <= 0 || nvals > len(b) {
+			return ErrWALCorrupt
+		}
+
 		switch typ {
 		case float64EntryType:
 			if i+16*nvals > len(b) {
@@ -1081,7 +1085,7 @@ func (w *WALSegmentWriter) close() error {
 // WALSegmentReader reads WAL segments.
 type WALSegmentReader struct {
 	rc    io.ReadCloser
-	r     io.Reader
+	r     *bufio.Reader
 	entry WALEntry
 	n     int64
 	err   error
@@ -1091,8 +1095,16 @@ type WALSegmentReader struct {
 func NewWALSegmentReader(r io.ReadCloser) *WALSegmentReader {
 	return &WALSegmentReader{
 		rc: r,
-		r:  bufio.NewReaderSize(r, 1024*1024),
+		r:  bufio.NewReader(r),
 	}
+}
+
+func (r *WALSegmentReader) Reset(rc io.ReadCloser) {
+	r.rc = rc
+	r.r.Reset(rc)
+	r.entry = nil
+	r.n = 0
+	r.err = nil
 }
 
 // Next indicates if there is a value to read.
@@ -1187,7 +1199,12 @@ func (r *WALSegmentReader) Error() error {
 
 // Close closes the underlying io.Reader.
 func (r *WALSegmentReader) Close() error {
-	return r.rc.Close()
+	if r.rc == nil {
+		return nil
+	}
+	err := r.rc.Close()
+	r.rc = nil
+	return err
 }
 
 // idFromFileName parses the segment file ID from its name.
